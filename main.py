@@ -1,7 +1,10 @@
+from fastapi import FastAPI
 from agent import create_bedrock_agent
 from utils.logger import get_logger
 import os
 from dotenv import load_dotenv
+from contextlib import asynccontextmanager
+from router import router, set_bedrock_agent
 
 # Load environment variables from .env file
 load_dotenv()
@@ -10,51 +13,69 @@ load_dotenv()
 logger = get_logger(__name__)
 
 
-def main():
-    logger.info("Starting Echo MCP Client with Amazon Bedrock Nova Pro")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialize and cleanup resources"""
+    logger.info("Starting Echo MCP Client API with Amazon Bedrock Nova Pro")
     
-    # Debug: Check if environment variables are loaded
+    # Check AWS credentials
     aws_access_key = os.getenv('AWS_ACCESS_KEY_ID')
     aws_region = os.getenv('AWS_DEFAULT_REGION')
     
-    if aws_access_key:
-        logger.info(f"AWS credentials loaded successfully (Access Key: {aws_access_key[:8]}...)")
-        logger.info(f"AWS region: {aws_region}")
-    else:
+    if not aws_access_key:
         logger.error("AWS credentials not found in environment variables")
-        logger.error("Make sure your .env file exists and contains AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY")
-        return
+        raise RuntimeError("AWS credentials not configured")
     
-    # Create Bedrock agent
+    logger.info(f"AWS credentials loaded successfully (Access Key: {aws_access_key[:8]}...)")
+    logger.info(f"AWS region: {aws_region}")
+    
+    # Initialize Bedrock agent
     try:
         logger.debug("Initializing Bedrock agent...")
-        agent = create_bedrock_agent()
+        bedrock_agent = create_bedrock_agent()
         logger.info("Bedrock agent initialized successfully")
+        
+        # Set the agent in the router
+        set_bedrock_agent(bedrock_agent)
         
         # Test connection
         logger.debug("Testing Bedrock connection...")
-        if agent.test_connection():
+        if bedrock_agent.test_connection():
             logger.info("Connection to Bedrock successful")
-            
-            # Example usage
-            prompt = "Explain what Amazon Nova Pro is in one sentence."
-            logger.info(f"Sending prompt: {prompt}")
-            response = agent.invoke(prompt)
-            logger.info("Received response from Nova Pro")
-            print(f"\nPrompt: {prompt}")
-            print(f"Response: {response}")
-            
         else:
             logger.error("Connection to Bedrock failed")
+            raise RuntimeError("Failed to connect to Bedrock")
             
     except Exception as e:
         logger.error(f"Error initializing Bedrock agent: {e}")
-        print(f"✗ Error initializing Bedrock agent: {e}")
-        print("\nMake sure you have:")
-        print("1. AWS credentials configured (AWS CLI, env vars, or IAM role)")
-        print("2. Access to Amazon Bedrock in your AWS account")
-        print("3. Nova Pro model enabled in Bedrock console")
+        raise RuntimeError(f"Failed to initialize Bedrock agent: {e}")
+    
+    yield
+    
+    # Cleanup
+    logger.info("Shutting down Echo MCP Client API")
+
+
+# Create FastAPI app
+app = FastAPI(
+    title="Echo MCP Client API",
+    description="API for interacting with Amazon Bedrock Nova Pro via MCP",
+    version="0.1.0",
+    lifespan=lifespan
+)
+
+# Include the router
+app.include_router(router)
 
 
 if __name__ == "__main__":
-    main()
+    import uvicorn
+    
+    # Run the FastAPI server
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        log_level="info"
+    )

@@ -117,7 +117,17 @@ def get_logger(name: str = None) -> logging.Logger:
         frame = inspect.currentframe().f_back
         name = frame.f_globals.get('__name__', 'echo-mcp-client')
     
-    return logging.getLogger(name)
+    # Get or create logger
+    logger = logging.getLogger(name)
+    
+    # If this logger doesn't have handlers, inherit from parent or configure it
+    if not logger.handlers and name != "echo-mcp-client":
+        # Make sure it inherits from the main project logger
+        logger.parent = logging.getLogger("echo-mcp-client")
+        # Don't add handlers to child loggers, let them propagate to parent
+        logger.propagate = True
+    
+    return logger
 
 
 # Default project logger configuration
