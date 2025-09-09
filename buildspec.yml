@@ -18,28 +18,53 @@ phases:
     commands:
       - echo "Running pre-build steps..."
       - echo "Running tests..."
-      - cd src && python -m pytest tests/ -v --tb=short || echo "Tests completed with warnings"
-      - cd ..
+      - PYTHONPATH=/app/src python -m pytest src/tests/ -v --tb=short || echo "Tests completed with warnings"
       - echo "Getting AWS account ID and region..."
       - export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
       - export AWS_DEFAULT_REGION=$AWS_REGION
       - echo "Logging in to Amazon ECR..."
-      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+      - |
+        if ! aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com; then
+          echo "ECR login failed. Please check IAM permissions for CodeBuild service role."
+          echo "Required permissions: ecr:GetAuthorizationToken, ecr:BatchCheckLayerAvailability, ecr:GetDownloadUrlForLayer, ecr:BatchGetImage"
+          exit 1
+        fi
       - echo "Ensuring ECR repository exists..."
-      - aws ecr describe-repositories --repository-names $IMAGE_REPO_NAME --region $AWS_DEFAULT_REGION || aws ecr create-repository --repository-name $IMAGE_REPO_NAME --region $AWS_DEFAULT_REGION
+      - |
+        if ! aws ecr describe-repositories --repository-names $IMAGE_REPO_NAME --region $AWS_DEFAULT_REGION 2>/dev/null; then
+          echo "Creating ECR repository..."
+          aws ecr create-repository --repository-name $IMAGE_REPO_NAME --region $AWS_DEFAULT_REGION || {
+            echo "Failed to create ECR repository. Please check IAM permissions."
+            exit 1
+          }
+        else
+          echo "ECR repository already exists."
+        fi
 
   build:
     commands:
       - echo "Building Docker image..."
-      - docker build -t $IMAGE_REPO_NAME:$IMAGE_TAG -f Dockerfile .
+      - |
+        if ! docker build -t $IMAGE_REPO_NAME:$IMAGE_TAG -f Dockerfile .; then
+          echo "Docker build failed. Please check the Dockerfile and build logs."
+          exit 1
+        fi
       - docker tag $IMAGE_REPO_NAME:$IMAGE_TAG $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG
       - docker tag $IMAGE_REPO_NAME:$IMAGE_TAG $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$CODEBUILD_RESOLVED_SOURCE_VERSION
 
   post_build:
     commands:
       - echo "Pushing Docker images to ECR..."
-      - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG
-      - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$CODEBUILD_RESOLVED_SOURCE_VERSION
+      - |
+        if ! docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG; then
+          echo "Failed to push Docker image with latest tag."
+          exit 1
+        fi
+      - |
+        if ! docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$CODEBUILD_RESOLVED_SOURCE_VERSION; then
+          echo "Failed to push Docker image with commit tag."
+          exit 1
+        fi
       - echo "Creating imagedefinitions.json..."
       - printf '[{"name":"echo-mcp-client","imageUri":"%s"}]' $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG > imagedefinitions.json
       - echo "Build completed successfully!"

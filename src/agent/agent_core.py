@@ -477,8 +477,8 @@ Analysis: {json.dumps(ai_analysis)}"""
             except ValueError:
                 pass
 
-        # Extract phone numbers
-        phone_match = re.search(r'(\+?1?[-.\s]?\(?[0-9]{3}\)?[-.\s]?[0-9]{3}[-.\s]?[0-9]{4})', command)
+        # Extract phone numbers - improved pattern
+        phone_match = re.search(r'(\+?1?[-.\s]?\(?[0-9]{3}\)?[-.\s]?[0-9]{3}[-.\s]?[0-9]{4}|\+1-[0-9]{3}-[0-9]{3}-[0-9]{4})', command)
         if phone_match:
             parameters["to"] = phone_match.group(1)
 
