@@ -1,0 +1,59 @@
+{
+  "family": "echo-mcp-client",
+  "taskRoleArn": "arn:aws:iam::ACCOUNT_ID:role/ecsTaskExecutionRole",
+  "executionRoleArn": "arn:aws:iam::ACCOUNT_ID:role/ecsTaskExecutionRole",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "256",
+  "memory": "512",
+  "containerDefinitions": [
+    {
+      "name": "echo-mcp-client",
+      "image": "ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/echo-mcp-client:latest",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 8000,
+          "hostPort": 8000,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        {"name": "ENVIRONMENT", "value": "production"},
+        {"name": "DEBUG", "value": "false"},
+        {"name": "APP_NAME", "value": "Echo MCP Client"},
+        {"name": "APP_VERSION", "value": "1.0.0"},
+        {"name": "PORT", "value": "8000"},
+        {"name": "API_BASE_URL", "value": "https://api.echo-mcp-server.qkiu.tech"},
+        {"name": "SERVER_BASE_URL", "value": "https://api.echo-mcp-server.qkiu.tech"},
+        {"name": "JWT_SECRET_KEY", "value": "your-jwt-secret-key"},
+        {"name": "JWT_ALGORITHM", "value": "HS256"},
+        {"name": "JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "value": "30"},
+        {"name": "LOG_LEVEL", "value": "INFO"},
+        {"name": "CORS_ORIGINS", "value": "[\"https://echo-mcp-client.qkiu.tech\"]"},
+        {"name": "CORS_ALLOW_CREDENTIALS", "value": "true"}
+      ],
+      "secrets": [
+        {
+          "name": "OPENAI_API_KEY",
+          "valueFrom": "arn:aws:secretsmanager:REGION:ACCOUNT_ID:secret:echo-mcp/openai-key"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/echo-mcp-client",
+          "awslogs-region": "REGION",
+          "awslogs-stream-prefix": "ecs"
+        }
+      },
+      "healthCheck": {
+        "command": ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 60
+      }
+    }
+  ]
+}
