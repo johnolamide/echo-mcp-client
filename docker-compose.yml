@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  # Echo MCP Client Service
+  echo_mcp_client:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: echo_mcp_client
+    ports:
+      - "8000:8000"
+    environment:
+      # Application settings
+      - ENVIRONMENT=development
+      - DEBUG=true
+      - APP_NAME=Echo MCP Client
+      - APP_VERSION=1.0.0
+      - PORT=8000
+      # Server connection settings
+      - API_BASE_URL=https://api.echo-mcp-server.qkiu.tech
+      - SERVER_BASE_URL=https://api.echo-mcp-server.qkiu.tech
+      # JWT settings
+      - JWT_SECRET_KEY=your-secret-key-change-in-production-docker
+      - JWT_ALGORITHM=HS256
+      - JWT_ACCESS_TOKEN_EXPIRE_MINUTES=30
+      # OpenAI settings
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # Logging
+      - LOG_LEVEL=INFO
+      # CORS settings
+      - CORS_ORIGINS=["http://localhost:3000", "http://localhost:8080", "http://localhost:5173", "https://echo-mcp-client.qkiu.tech"]
+      - CORS_ALLOW_CREDENTIALS=true
+    volumes:
+      - ./src:/app/src:ro # Mount for development hot reload
+    networks:
+      - echo_mcp_client_network
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "curl",
+          "-f",
+          "http://localhost:8000/health"
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+networks:
+  echo_mcp_client_network:
+    driver: bridge
