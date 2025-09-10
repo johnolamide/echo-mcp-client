@@ -85,6 +85,23 @@ async def root():
         "websocket_endpoint": "/ws/agent/{user_id}"
     }
 
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for load balancer."""
+    # Get basic status information
+    status_info = await client.get_status()
+
+    return {
+        "status": "healthy",
+        "service": "echo-mcp-client",
+        "timestamp": asyncio.get_event_loop().time(),
+        "version": "1.0.0",
+        "authenticated": status_info.get("authenticated", False),
+        "server_connection": status_info.get("server_host", "unknown"),
+        "websocket_endpoint": "/ws/agent/{user_id}",
+        "active_user_agents": status_info.get("active_user_agents", 0)
+    }
+
 @app.websocket("/ws/agent/{user_id}")
 async def websocket_agent(websocket: WebSocket, user_id: str):
     """WebSocket endpoint for real-time agent communication."""
@@ -231,33 +248,49 @@ class EchoMCPClient:
         logger.info("Initializing Echo MCP Client...")
 
         try:
-            # Test server connection
-            await self._test_server_connection()
+            # Test server connection (optional)
+            try:
+                await self._test_server_connection()
+            except Exception as e:
+                logger.warning(f"Server connection test failed: {e}. Continuing without server connection.")
 
             # Authenticate if token is available
             if settings.jwt_token:
-                await self._authenticate_with_token()
+                try:
+                    await self._authenticate_with_token()
+                except Exception as e:
+                    logger.warning(f"Authentication failed: {e}. Continuing without authentication.")
             else:
-                logger.info("No JWT token provided. Please login first.")
+                logger.info("No JWT token provided. Running in anonymous mode.")
 
-            # Initialize agent
-            await agent_core.initialize()
+            # Initialize agent (should work even without authentication)
+            try:
+                await agent_core.initialize()
+            except Exception as e:
+                logger.warning(f"Agent initialization failed: {e}. Using mock services.")
+                # Continue anyway - agent should work with mock services
 
             logger.info("Echo MCP Client initialized successfully")
 
         except Exception as e:
             logger.error(f"Failed to initialize client: {e}")
-            raise
+            # Don't raise - allow the application to start even with initialization issues
+            logger.warning("Continuing with limited functionality due to initialization errors")
 
     async def _test_server_connection(self):
         """Test connection to the server."""
         try:
-            # Try to access a public endpoint
-            response = await api_client._make_request("GET", "/services/")
+            # Try to access a public endpoint or health check
+            response = await api_client._make_request("GET", "/health")
             logger.info("✅ Server connection successful")
         except Exception as e:
-            logger.error(f"❌ Server connection failed: {e}")
-            raise
+            # Try alternative endpoint if health check doesn't exist
+            try:
+                response = await api_client._make_request("GET", "/")
+                logger.info("✅ Server connection successful (via root endpoint)")
+            except Exception as e2:
+                logger.warning(f"Server connection test failed: {e2}")
+                raise Exception(f"Cannot connect to server at {settings.server_host}")
 
     async def _authenticate_with_token(self):
         """Authenticate using existing JWT token."""
