@@ -4,7 +4,7 @@ FROM public.ecr.aws/docker/library/python:3.11-slim
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app/src \
+    PYTHONPATH=/app \
     PATH="/opt/venv/bin:$PATH"
 
 # Install system dependencies
@@ -34,9 +34,6 @@ WORKDIR /app
 # Copy application code
 COPY --chown=app:app . .
 
-# Set working directory to src for running the app
-WORKDIR /app/src
-
 # Expose port
 EXPOSE 8000
 
@@ -45,4 +42,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
 # Run the application
-CMD ["python", "main.py", "--server"]
+CMD ["python", "src/main.py", "--server"]

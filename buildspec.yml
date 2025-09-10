@@ -18,7 +18,7 @@ phases:
     commands:
       - echo "Running pre-build steps..."
       - echo "Running tests..."
-      - PYTHONPATH=/app/src python -m pytest src/tests/ -v --tb=short || echo "Tests completed with warnings"
+      - PYTHONPATH=/app python -m pytest src/tests/ -v --tb=short || echo "Tests completed with warnings"
       - echo "Getting AWS account ID and region..."
       - export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
       - export AWS_DEFAULT_REGION=$AWS_REGION
