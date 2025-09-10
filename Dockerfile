@@ -34,6 +34,9 @@ WORKDIR /app
 # Copy application code
 COPY --chown=app:app . .
 
+# Set working directory to src for running the app
+WORKDIR /app/src
+
 # Expose port
 EXPOSE 8000
 
@@ -42,4 +45,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
 # Run the application
-CMD ["python", "src/main.py", "--server"]
+CMD ["python", "main.py", "--server"]
