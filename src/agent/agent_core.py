@@ -10,8 +10,8 @@ from datetime import datetime
 import websockets
 import openai
 
-from config.settings import settings
-from api.server_client import api_client
+from src.config.settings import settings
+from src.api.server_client import api_client
 
 
 logger = logging.getLogger(__name__)
