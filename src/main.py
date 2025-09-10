@@ -10,9 +10,9 @@ import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
-from config.settings import settings
-from api.server_client import api_client
-from agent.agent_core import agent_core, agent_manager
+from src.config.settings import settings
+from src.api.server_client import api_client
+from src.agent.agent_core import agent_core, agent_manager
 
 
 # Configure logging

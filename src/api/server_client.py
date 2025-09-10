@@ -8,7 +8,7 @@ from typing import Dict, Any, Optional, List
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from config.settings import settings
+from src.config.settings import settings
 
 
 logger = logging.getLogger(__name__)
