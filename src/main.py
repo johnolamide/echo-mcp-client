@@ -41,6 +41,7 @@ app.add_middleware(
         "http://echo-mcp.qkiu.tech",       # Production UI (HTTP)
         "https://agent.echo-mcp.qkiu.tech",   # Client domain (for WebSocket)
         "http://agent.echo-mcp.qkiu.tech",    # Client domain (HTTP)
+        "*"
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
