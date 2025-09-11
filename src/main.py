@@ -9,6 +9,7 @@ from typing import Optional, Dict, Any
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.middleware.cors import CORSMiddleware
 
 from src.config.settings import settings
 from src.api.server_client import api_client
@@ -29,6 +30,23 @@ logger = logging.getLogger(__name__)
 
 # FastAPI application for WebSocket endpoints
 app = FastAPI(title="Echo MCP Client Agent API", description="Real-time agent communication via WebSocket")
+
+# CORS Configuration for UI Integration
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",              # Development UI
+        "https://localhost:5173",             # Development UI (HTTPS)
+        "https://echo-mcp.qkiu.tech",      # Production UI
+        "http://echo-mcp.qkiu.tech",       # Production UI (HTTP)
+        "https://agent.echo-mcp.qkiu.tech",   # Client domain (for WebSocket)
+        "http://agent.echo-mcp.qkiu.tech",    # Client domain (HTTP)
+    ],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+)
 
 # WebSocket connection manager
 class ConnectionManager:
