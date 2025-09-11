@@ -37,11 +37,14 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",              # Development UI
         "https://localhost:5173",             # Development UI (HTTPS)
-        "https://echo-mcp.qkiu.tech",      # Production UI
-        "http://echo-mcp.qkiu.tech",       # Production UI (HTTP)
+        "https://echo-mcp.qkiu.tech",         # Production UI
+        "http://echo-mcp.qkiu.tech",          # Production UI (HTTP)
+        "https://echo-mcp-ui.qkiu.tech",      # Alternative UI domain
+        "http://echo-mcp-ui.qkiu.tech",       # Alternative UI domain
         "https://agent.echo-mcp.qkiu.tech",   # Client domain (for WebSocket)
         "http://agent.echo-mcp.qkiu.tech",    # Client domain (HTTP)
-        "*"
+        "https://api.echo-mcp-server.qkiu.tech", # Server domain
+        "http://api.echo-mcp-server.qkiu.tech"   # Server domain
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
