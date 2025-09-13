@@ -23,12 +23,14 @@ class ServerAPIClient:
             timeout=httpx.Timeout(settings.request_timeout),
             headers={"Content-Type": "application/json"}
         )
-        self._auth_token = settings.jwt_token
+        # Authentication removed for hackathon demo
+        # self._auth_token = settings.jwt_token
 
-    def set_auth_token(self, token: str):
-        """Set the authentication token."""
-        self._auth_token = token
-        self.client.headers.update({"Authorization": f"Bearer {token}"})
+    # Authentication removed for hackathon demo
+    # def set_auth_token(self, token: str):
+    #     """Set the authentication token."""
+    #     self._auth_token = token
+    #     self.client.headers.update({"Authorization": f"Bearer {token}"})
 
     async def _make_request(
         self,
@@ -126,10 +128,11 @@ class ServerAPIClient:
             return response["data"]
         return []
 
+    # Authentication removed for hackathon demo
     # User endpoints
-    async def get_current_user(self) -> Dict[str, Any]:
-        """Get current user information."""
-        return await self._make_request("GET", "/auth/me")
+    # async def get_current_user(self) -> Dict[str, Any]:
+    #     """Get current user information."""
+    #     return await self._make_request("GET", "/auth/me")
 
     async def close(self):
         """Close the HTTP client."""

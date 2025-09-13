@@ -8,7 +8,8 @@ import json
 from typing import Optional, Dict, Any
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+# Authentication removed for hackathon demo
+# from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.config.settings import settings
@@ -62,30 +63,32 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# Authentication removed for hackathon demo
 # Authentication dependency
-security = HTTPBearer()
+# security = HTTPBearer()
 
-async def get_current_user_ws(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """Authenticate WebSocket connection."""
-    token = credentials.credentials
+# async def get_current_user_ws(credentials: HTTPAuthorizationCredentials = Depends(security)):
+#     """Authenticate WebSocket connection."""
+#     token = credentials.credentials
 
-    # Verify token with server
-    api_client.set_auth_token(token)
-    try:
-        user_info = await api_client.get_current_user()
-        if user_info.get("status") == "success":
-            return user_info["data"]
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid authentication token"
-            )
-    except Exception as e:
-        logger.error(f"Authentication error: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication failed"
-        )
+#     # Verify token with server
+#     api_client.set_auth_token(token)
+#     try:
+#         user_info = await api_client.get_current_user()
+#         if user_info.get("status") == "success":
+#             return user_info["data"]
+#         else:
+#             raise HTTPException(
+#                 status_code=status.HTTP_401_UNAUTHORIZED,
+#                 detail="Invalid authentication token"
+#             )
+#     except Exception as e:
+#         logger.error(f"Authentication error: {e}")
+#         raise HTTPException(
+#             status_code=status.HTTP_401_UNAUTHORIZED,
+#             detail="Authentication failed"
+#         )
+
 
 @app.get("/")
 async def root():
