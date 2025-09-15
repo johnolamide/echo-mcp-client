@@ -1,6 +1,13 @@
 # Echo MCP Client
 
-AI Agent client for the Echo MCP (Model Context Protocol) system. This client provides intelligent service management through natural language commands with advanced AI reasoning, user isolation, and real-time chat integration.
+[![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
+[![OpenAI](https://img.shields.io/badge/OpenAI-GPT--Integration-green.svg)](https://openai.com/)
+[![WebSocket](https://img.shields.io/badge/WebSocket-Real--Time-purple.svg)](https://developer.mozilla.org/en-US/docs/Web/API/WebSockets)
+[![Docker](https://img.shields.io/badge/Docker-Containerized-blue.svg)](https://www.docker.com/)
+[![AsyncIO](https://img.shields.io/badge/AsyncIO-Enabled-yellow.svg)](https://docs.python.org/3/library/asyncio.html)
+[![MCP](https://img.shields.io/badge/MCP-Model--Context--Protocol-orange.svg)](https://modelcontextprotocol.io/)
+
+An intelligent AI agent client for the Echo MCP system that enables users to interact with services through natural language commands. Each user gets their own isolated AI agent that can process commands, manage services, and communicate in real-time, powered by advanced AI reasoning and secure multi-tenant architecture.
 
 ## 🚀 **New Features (Latest Update)**
 
