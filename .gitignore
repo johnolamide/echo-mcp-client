@@ -51,8 +51,6 @@ coverage.xml
 .pytest_cache/
 cover/
 
-.env.production
-
 # Translations
 *.mo
 *.pot
@@ -123,6 +121,7 @@ celerybeat.pid
 
 # Environments
 .env
+.env.production
 .venv
 env/
 venv/
