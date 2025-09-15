@@ -131,9 +131,9 @@ async def test_chat_integration():
             "data": {"id": 123}
         })
 
-        result = await agent.send_chat_message(2, "Hello from agent")
+        result = await agent.send_chat_message("testuser", "Hello from agent")
         assert result["action"] == "message_sent"
-        assert result["receiver_id"] == 2
+        assert result["receiver_username"] == "testuser"
 
 
 @pytest.mark.asyncio

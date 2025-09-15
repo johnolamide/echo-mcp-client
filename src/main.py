@@ -59,7 +59,13 @@ class ConnectionManager:
 
     async def send_personal_message(self, message: str, client_id: str):
         if client_id in self.active_connections:
-            await self.active_connections[client_id].send_text(message)
+            try:
+                await self.active_connections[client_id].send_text(message)
+            except Exception as e:
+                # WebSocket connection is likely closed, remove it
+                logger.warning(f"Failed to send message to {client_id}: {e}")
+                self.disconnect(client_id)
+                raise
 
 manager = ConnectionManager()
 
@@ -224,22 +230,43 @@ async def websocket_agent(websocket: WebSocket, user_id: str):
                 await manager.send_personal_message(json.dumps(response), user_id)
                 logger.info(f"📤 Sent response to user {user_id}: {response['type']}")
 
+            except WebSocketDisconnect:
+                # Handle WebSocket disconnect gracefully
+                logger.info(f"WebSocket disconnected for user {user_id} during message processing")
+                break
+
             except json.JSONDecodeError:
                 error_response = {
                     "type": "error",
                     "message": "Invalid JSON format",
                     "timestamp": asyncio.get_event_loop().time()
                 }
-                await manager.send_personal_message(json.dumps(error_response), user_id)
+                try:
+                    await manager.send_personal_message(json.dumps(error_response), user_id)
+                except:
+                    # Connection might be closed, break the loop
+                    logger.warning(f"Failed to send error response to user {user_id}, connection likely closed")
+                    break
 
             except Exception as e:
+                # Check if this is a WebSocket connection error
+                error_str = str(e).lower()
+                if "disconnect" in error_str or "connection" in error_str or "websocket" in error_str:
+                    logger.info(f"WebSocket connection error for user {user_id}: {e}")
+                    break
+                
                 logger.error(f"Error processing message for user {user_id}: {e}")
                 error_response = {
                     "type": "error",
                     "message": f"Internal error: {str(e)}",
                     "timestamp": asyncio.get_event_loop().time()
                 }
-                await manager.send_personal_message(json.dumps(error_response), user_id)
+                try:
+                    await manager.send_personal_message(json.dumps(error_response), user_id)
+                except:
+                    # Connection might be closed, break the loop
+                    logger.warning(f"Failed to send error response to user {user_id}, connection likely closed")
+                    break
 
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected for user {user_id}")
@@ -406,7 +433,7 @@ async def run_server():
     config = uvicorn.Config(
         app=app,
         host="0.0.0.0",
-        port=8000,
+        port=settings.agent_port,
         log_level=settings.log_level.lower()
     )
     server = uvicorn.Server(config)

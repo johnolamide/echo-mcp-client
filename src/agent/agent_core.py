@@ -1,20 +1,337 @@
 """
 Agent core for processing commands and managing services.
-Enhanced with AI reasoning capabilities.
+Enhanced with LangChain + Amazon Bedrock for advanced AI reasoning capabilities.
+Supports dynamic service loading based on user subscriptions.
 """
-import asyncio
 import json
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Callable
 from datetime import datetime
-import websockets
-import openai
 
-from src.config.settings import settings
-from src.api.server_client import api_client
+# LangChain + Bedrock imports
+from langchain_aws import ChatBedrockConverse
+from langchain_core.tools import tool
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain.memory import ConversationBufferWindowMemory
+
+from config.settings import settings
+from api.server_client import api_client
 
 
 logger = logging.getLogger(__name__)
+
+
+class DynamicServiceRegistry:
+    """Registry for dynamically creating service function tools."""
+
+    def __init__(self):
+        self.service_factories: Dict[str, Callable] = {}
+        self.register_builtin_services()
+
+    def register_builtin_services(self):
+        """Register built-in service types and their tool factories."""
+        self.service_factories = {
+            "payment": self._create_payment_tool,
+            "communication": self._create_communication_tool,
+            "email": self._create_email_tool,
+            "sms": self._create_sms_tool,
+            "stripe": self._create_stripe_tool,
+            "twilio": self._create_twilio_tool,
+        }
+
+    def register_service_factory(self, service_type: str, factory_func: Callable):
+        """Register a custom service factory."""
+        self.service_factories[service_type] = factory_func
+
+    def create_tool_for_service(self, service_config: Dict[str, Any]) -> Optional[Callable]:
+        """Create a function tool for a given service configuration."""
+        service_type = service_config.get("type", "").lower()
+        service_name = service_config.get("name", "").lower()
+
+        # Try exact type match first
+        if service_type in self.service_factories:
+            return self.service_factories[service_type](service_config)
+
+        # Try name-based matching for specific services
+        for name_key in ["stripe", "twilio", "paypal", "venmo"]:
+            if name_key in service_name:
+                if name_key in self.service_factories:
+                    return self.service_factories[name_key](service_config)
+
+        # Fallback to generic service tool
+        return self._create_generic_service_tool(service_config)
+
+    def _create_payment_tool(self, service_config: Dict[str, Any]) -> Callable:
+        """Create a payment service tool."""
+        service_name = service_config.get("name", "Payment Service")
+
+        @tool
+        def payment_tool(command: str, amount: float = None, currency: str = "USD",
+                        recipient: str = None, description: str = None) -> Dict[str, Any]:
+            """Handle payment-related commands like pay, transfer, refund."""
+            try:
+                if not amount or amount <= 0:
+                    return {
+                        "action": "payment_failed",
+                        "error": "Invalid amount",
+                        "message": "Please specify a valid payment amount."
+                    }
+
+                # Simulate payment processing with service-specific logic
+                return {
+                    "action": "payment_processed",
+                    "service": service_name,
+                    "amount": amount,
+                    "currency": currency,
+                    "recipient": recipient,
+                    "description": description,
+                    "status": "success",
+                    "transaction_id": f"txn_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                }
+            except Exception as e:
+                logger.error(f"{service_name} payment error: {e}")
+                return {"action": "payment_failed", "error": str(e)}
+
+        payment_tool.__name__ = f"{service_name.lower().replace(' ', '_')}_tool"
+        return payment_tool
+
+    def _create_communication_tool(self, service_config: Dict[str, Any]) -> Callable:
+        """Create a communication service tool."""
+        service_name = service_config.get("name", "Communication Service")
+
+        @tool
+        def communication_tool(command: str, message: str = None, recipient: str = None,
+                             phone: str = None, subject: str = None) -> Dict[str, Any]:
+            """Handle communication-related commands like send message, call."""
+            try:
+                if not message:
+                    return {
+                        "action": "message_failed",
+                        "error": "No message content",
+                        "message": "Please specify what message you want to send."
+                    }
+
+                if not (recipient or phone):
+                    return {
+                        "action": "message_failed",
+                        "error": "No recipient",
+                        "message": "Please specify who you want to send the message to."
+                    }
+
+                # Simulate message sending
+                return {
+                    "action": "message_sent",
+                    "service": service_name,
+                    "message": message,
+                    "recipient": recipient or phone,
+                    "subject": subject,
+                    "status": "success",
+                    "message_id": f"msg_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                }
+            except Exception as e:
+                logger.error(f"{service_name} communication error: {e}")
+                return {"action": "message_failed", "error": str(e)}
+
+        communication_tool.__name__ = f"{service_name.lower().replace(' ', '_')}_tool"
+        return communication_tool
+
+    def _create_email_tool(self, service_config: Dict[str, Any]) -> Callable:
+        """Create an email service tool."""
+        service_name = service_config.get("name", "Email Service")
+
+        @tool
+        def email_tool(to: str, subject: str, body: str, cc: str = None, bcc: str = None) -> Dict[str, Any]:
+            """Send an email message."""
+            try:
+                return {
+                    "action": "email_sent",
+                    "service": service_name,
+                    "to": to,
+                    "subject": subject,
+                    "body": body,
+                    "cc": cc,
+                    "bcc": bcc,
+                    "status": "success",
+                    "message_id": f"email_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                }
+            except Exception as e:
+                logger.error(f"{service_name} email error: {e}")
+                return {"action": "email_failed", "error": str(e)}
+
+        email_tool.__name__ = f"{service_name.lower().replace(' ', '_')}_tool"
+        return email_tool
+
+    def _create_sms_tool(self, service_config: Dict[str, Any]) -> Callable:
+        """Create an SMS service tool."""
+        service_name = service_config.get("name", "SMS Service")
+
+        @tool
+        def sms_tool(to: str, message: str) -> Dict[str, Any]:
+            """Send an SMS message."""
+            try:
+                return {
+                    "action": "sms_sent",
+                    "service": service_name,
+                    "to": to,
+                    "message": message,
+                    "status": "success",
+                    "message_id": f"sms_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                }
+            except Exception as e:
+                logger.error(f"{service_name} SMS error: {e}")
+                return {"action": "sms_failed", "error": str(e)}
+
+        sms_tool.__name__ = f"{service_name.lower().replace(' ', '_')}_tool"
+        return sms_tool
+
+    def _create_stripe_tool(self, service_config: Dict[str, Any]) -> Callable:
+        """Create a Stripe payment tool."""
+        service_name = service_config.get("name", "Stripe")
+
+        @tool
+        def stripe_tool(action: str, amount: float = None, currency: str = "USD",
+                       customer_id: str = None, payment_method_id: str = None) -> Dict[str, Any]:
+            """Handle Stripe payment operations."""
+            try:
+                if action == "charge" and (not amount or amount <= 0):
+                    return {
+                        "action": "stripe_charge_failed",
+                        "error": "Invalid amount",
+                        "message": "Please specify a valid charge amount."
+                    }
+
+                return {
+                    "action": f"stripe_{action}",
+                    "service": service_name,
+                    "amount": amount,
+                    "currency": currency,
+                    "customer_id": customer_id,
+                    "payment_method_id": payment_method_id,
+                    "status": "success",
+                    "transaction_id": f"stripe_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                }
+            except Exception as e:
+                logger.error(f"{service_name} error: {e}")
+                return {"action": "stripe_failed", "error": str(e)}
+
+        stripe_tool.__name__ = "stripe_tool"
+        return stripe_tool
+
+    def _create_twilio_tool(self, service_config: Dict[str, Any]) -> Callable:
+        """Create a Twilio communication tool."""
+        service_name = service_config.get("name", "Twilio")
+
+        @tool
+        def twilio_tool(action: str, to: str = None, from_: str = None,
+                       message: str = None, url: str = None) -> Dict[str, Any]:
+            """Handle Twilio communication operations."""
+            try:
+                if action == "message" and not message:
+                    return {
+                        "action": "twilio_message_failed",
+                        "error": "No message content",
+                        "message": "Please specify message content."
+                    }
+
+                return {
+                    "action": f"twilio_{action}",
+                    "service": service_name,
+                    "to": to,
+                    "from": from_,
+                    "message": message,
+                    "url": url,
+                    "status": "success",
+                    "sid": f"twilio_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                }
+            except Exception as e:
+                logger.error(f"{service_name} error: {e}")
+                return {"action": "twilio_failed", "error": str(e)}
+
+        twilio_tool.__name__ = "twilio_tool"
+        return twilio_tool
+
+    def _create_generic_service_tool(self, service_config: Dict[str, Any]) -> Callable:
+        """Create a generic service tool for unknown service types."""
+        service_name = service_config.get("name", "Generic Service")
+        service_type = service_config.get("type", "generic")
+
+        @tool
+        def generic_tool(action: str, parameters: str = "{}") -> Dict[str, Any]:
+            """Handle generic service operations.
+
+            Args:
+                action: The action to perform (e.g., 'send', 'receive', 'process')
+                parameters: JSON string of additional parameters
+            """
+            try:
+                # Parse parameters if provided
+                parsed_params = {}
+                if parameters and parameters != "{}":
+                    try:
+                        import json
+                        parsed_params = json.loads(parameters)
+                    except json.JSONDecodeError:
+                        parsed_params = {"raw_parameters": parameters}
+
+                return {
+                    "action": f"{service_type}_{action}",
+                    "service": service_name,
+                    "parameters": parsed_params,
+                    "status": "success",
+                    "timestamp": datetime.now().isoformat()
+                }
+            except Exception as e:
+                logger.error(f"{service_name} error: {e}")
+                return {"action": "generic_failed", "error": str(e)}
+
+        generic_tool.__name__ = f"{service_name.lower().replace(' ', '_')}_tool"
+        return generic_tool
+
+
+# Global service registry instance
+service_registry = DynamicServiceRegistry()
+
+
+@tool
+async def get_available_services_tool() -> Dict[str, Any]:
+    """Get list of available services for the user."""
+    try:
+        # Get services from server
+        services = await api_client.get_user_agent_services()
+        return {
+            "action": "services_listed",
+            "services": services,
+            "count": len(services)
+        }
+    except Exception as e:
+        logger.error(f"Error getting services: {e}")
+        # Fallback to mock services
+        return {
+            "action": "services_listed",
+            "services": [
+                {"id": 1, "name": "Mock Payment Service", "type": "payment"},
+                {"id": 2, "name": "Mock Communication Service", "type": "communication"}
+            ],
+            "count": 2
+        }
+
+
+@tool
+async def send_chat_message_tool(recipient_username: str, content: str) -> Dict[str, Any]:
+    """Send a chat message to another user."""
+    try:
+        result = await api_client.send_message(recipient_username, content)
+        return {
+            "action": "message_sent",
+            "recipient_username": recipient_username,
+            "content": content,
+            "status": "success" if result.get("status") == "success" else "failed"
+        }
+    except Exception as e:
+        logger.error(f"Chat send error: {e}")
+        return {"action": "message_failed", "error": str(e)}
 
 
 class ServiceConnector:
@@ -141,70 +458,477 @@ class CommunicationConnector(ServiceConnector):
         }
 
 
+class EchoMCPAgent:
+    """LangChain + Amazon Bedrock-based agent for Echo MCP system with dynamic service loading."""
+
+    def __init__(self, user_id: int = None, user_data: Dict[str, Any] = None):
+        self.user_id = user_id
+        self.user_data = user_data or {}
+        self.conversation_history: List[Dict[str, Any]] = []
+        self.is_initialized = False
+        self.user_services: List[Dict[str, Any]] = []
+        self.dynamic_tools: List[Callable] = []
+
+        # Initialize LangChain + Bedrock agent
+        self.llm = None
+        self.agent_executor = None
+        self.memory = None
+        self._create_agent()
+
+    async def load_user_services(self):
+        """Load user services from the server and create dynamic tools."""
+        try:
+            logger.info(f"Loading services for user {self.user_id or 'global'}")
+            self.user_services = await api_client.get_user_agent_services()
+
+            # Create dynamic tools based on user services
+            self.dynamic_tools = []
+            service_capabilities = []
+
+            for service in self.user_services:
+                tool = service_registry.create_tool_for_service(service)
+                if tool:
+                    self.dynamic_tools.append(tool)
+                    service_capabilities.append(f"- {service['name']}: {service['type']} service")
+
+            # Add built-in tools
+            self.dynamic_tools.extend([
+                get_available_services_tool,
+                send_chat_message_tool
+            ])
+
+            # Update agent with new tools and instructions
+            self._update_agent_instructions(service_capabilities)
+
+            logger.info(f"Loaded {len(self.user_services)} user services with {len(self.dynamic_tools)} tools")
+
+        except Exception as e:
+            logger.error(f"Failed to load user services: {e}")
+            # Fallback to basic tools
+            self.dynamic_tools = [
+                get_available_services_tool,
+                send_chat_message_tool
+            ]
+
+    def _create_agent(self):
+        """Create the LangChain + Amazon Bedrock agent with initial tools."""
+        instructions = self._build_base_instructions()
+
+        # Start with basic tools, will be updated when user services are loaded
+        initial_tools = [
+            get_available_services_tool,
+            send_chat_message_tool
+        ]
+
+        # Check if AWS credentials are available
+        if not (settings.aws_access_key_id and settings.aws_secret_access_key):
+            logger.warning("No AWS credentials found - operating in demo mode")
+            # Create a minimal agent configuration for demo mode
+            self.agent_executor = None  # Will use fallback processing
+            return
+
+        try:
+            # Create Bedrock LLM using ChatBedrockConverse
+            self.llm = ChatBedrockConverse(
+                model="amazon.nova-pro-v1:0",
+                region_name=settings.aws_region or "us-east-1",
+                temperature=0.7,
+                max_tokens=1000,
+            )
+
+            # Create memory for conversation history
+            self.memory = ConversationBufferWindowMemory(
+                memory_key="chat_history",
+                return_messages=True,
+                k=10  # Keep last 10 interactions
+            )
+
+            # Create the agent prompt template
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", instructions),
+                MessagesPlaceholder(variable_name="chat_history"),
+                ("human", "{input}"),
+                MessagesPlaceholder(variable_name="agent_scratchpad"),
+            ])
+
+            # Create the agent
+            agent = create_tool_calling_agent(self.llm, initial_tools, prompt)
+
+            # Create the agent executor
+            self.agent_executor = AgentExecutor(
+                agent=agent,
+                tools=initial_tools,
+                memory=self.memory,
+                verbose=True,
+                handle_parsing_errors=True,
+                max_iterations=3,
+                early_stopping_method="generate"
+            )
+
+            logger.info("LangChain + Bedrock Agent created successfully")
+        except Exception as e:
+            logger.error(f"Failed to create Bedrock Agent: {e}")
+            logger.warning("Falling back to demo mode")
+            self.agent_executor = None  # Will use fallback processing
+
+    def _build_base_instructions(self) -> str:
+        """Build the base agent instructions."""
+        instructions = """
+        You are Echo, an intelligent AI assistant for managing services and communications.
+
+        Your capabilities include:
+        - Managing user services and integrations
+        - Providing helpful responses and guidance
+        - Processing various commands through available tools
+
+        Always be helpful, accurate, and user-friendly. If you need more information to complete a request,
+        ask the user for clarification rather than making assumptions.
+
+        Available tools:
+        - get_available_services_tool: List available services
+        - send_chat_message_tool: Send messages to other users
+        """
+
+        if self.user_id:
+            instructions += f"\n\nYou are assisting user {self.user_id}."
+
+        return instructions
+
+    def _update_agent_instructions(self, service_capabilities: List[str]):
+        """Update agent instructions and tools based on available services."""
+        if not service_capabilities:
+            return
+
+        # Build enhanced instructions
+        capabilities_text = "\n".join(service_capabilities)
+
+        enhanced_instructions = f"""
+        You are Echo, an intelligent AI assistant for managing services and communications.
+
+        Your capabilities include:
+        - Managing user services and integrations
+        - Providing helpful responses and guidance
+        - Processing various commands through available tools
+
+        Available Services:
+        {capabilities_text}
+
+        Always be helpful, accurate, and user-friendly. If you need more information to complete a request,
+        ask the user for clarification rather than making assumptions.
+
+        Available tools:
+        - get_available_services_tool: List available services
+        - send_chat_message_tool: Send messages to other users
+        """
+
+        # Add service-specific tools to the instructions
+        for service in self.user_services:
+            service_name = service['name'].lower().replace(' ', '_')
+            enhanced_instructions += f"- {service_name}_tool: Handle {service['type']} operations for {service['name']}\n"
+
+        if self.user_id:
+            enhanced_instructions += f"\n\nYou are assisting user {self.user_id}."
+
+        # Update the agent's tools if available
+        if self.agent_executor and self.dynamic_tools:
+            # Create new prompt with updated instructions
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", enhanced_instructions),
+                MessagesPlaceholder(variable_name="chat_history"),
+                ("human", "{input}"),
+                MessagesPlaceholder(variable_name="agent_scratchpad"),
+            ])
+
+            # Create new agent with updated tools and prompt
+            agent = create_tool_calling_agent(self.llm, self.dynamic_tools, prompt)
+
+            # Update the agent executor
+            self.agent_executor.agent = agent
+            self.agent_executor.tools = self.dynamic_tools
+
+    async def initialize(self):
+        """Initialize the agent and load user services."""
+        if not self.is_initialized:
+            # Load user services and create dynamic tools
+            await self.load_user_services()
+
+            self.is_initialized = True
+            logger.info(f"Echo MCP Agent initialized for user {self.user_id or 'global'} with {len(self.user_services)} services")
+
+    async def process_command(self, command: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Process a command using the LangChain agent with fallback handling."""
+        if not self.is_initialized:
+            await self.initialize()
+
+        # Check if we're in demo mode (no agent available)
+        if self.agent_executor is None:
+            logger.info("Agent executor is None, using fallback mode")
+            return await self._process_command_fallback(command, context, "no_credentials")
+
+        try:
+            logger.info(f"Processing command: {command}")
+
+            # Check if AWS credentials are available
+            if not self.llm:
+                logger.warning("No AWS credentials available, using fallback mode")
+                return await self._process_command_fallback(command, context)
+
+            # Add context to the command if provided
+            enhanced_command = command
+            if context:
+                enhanced_command = f"{command}\n\nContext: {json.dumps(context)}"
+
+            # Run the agent with the command using LangChain
+            result = await self.agent_executor.ainvoke({
+                "input": enhanced_command,
+                "chat_history": self.memory.chat_memory.messages
+            })
+
+            # Extract the response
+            response_text = result.get("output", "")
+            tool_calls = []
+
+            # Extract tool call information if available
+            if "intermediate_steps" in result:
+                for step in result["intermediate_steps"]:
+                    if len(step) > 1:
+                        tool_calls.append({
+                            "tool": step[0].tool,
+                            "input": step[0].tool_input,
+                            "output": step[1] if len(step) > 1 else None
+                        })
+
+            # Create response
+            response = {
+                "response": response_text,
+                "action": "command_processed",
+                "tool_calls": tool_calls,
+                "timestamp": datetime.now().isoformat(),
+                "user_id": self.user_id
+            }
+
+            # Add to conversation history
+            self._add_to_history(command, response)
+
+            return response
+
+        except Exception as e:
+            error_str = str(e).lower()
+
+            # Check for specific AWS/Bedrock errors
+            if "throttling" in error_str or "429" in error_str:
+                logger.warning("AWS throttling exceeded, switching to fallback mode")
+                return await self._process_command_fallback(command, context, "throttling")
+            elif "unauthorized" in error_str or "access_denied" in error_str:
+                logger.warning("AWS authentication error, switching to fallback mode")
+                return await self._process_command_fallback(command, context, "auth_error")
+            else:
+                logger.error(f"Error processing command: {e}")
+                return await self._process_command_fallback(command, context, "general_error")
+
+    async def _process_command_fallback(self, command: str, context: Optional[Dict[str, Any]] = None, error_type: str = "general") -> Dict[str, Any]:
+        """Fallback command processing when OpenAI is unavailable."""
+        logger.info(f"Using fallback processing for command: {command}")
+
+        # Initialize fallback response
+        response = {
+            "response": "",
+            "action": "fallback_processed",
+            "fallback_mode": True,
+            "error_type": error_type,
+            "timestamp": datetime.now().isoformat(),
+            "user_id": self.user_id
+        }
+
+        # Simple command pattern matching for common commands
+        command_lower = command.lower().strip()
+
+        if error_type == "throttling":
+            response["response"] = (
+                "🤖 I'm currently operating in demo mode because the AWS service throttling limit has been reached.\n\n"
+                f"I can still help you with basic commands! You said: '{command}'\n\n"
+                "💡 To restore full AI capabilities:\n"
+                "• Check your AWS billing and usage limits\n"
+                "• Consider increasing your Bedrock service limits\n"
+                "• Or wait for the throttling to reset\n\n"
+                "Try commands like 'help', 'services', or 'status' to see what I can do!"
+            )
+        elif error_type == "auth_error":
+            response["response"] = (
+                "🤖 I'm operating in demo mode due to an AWS authentication issue.\n\n"
+                f"I received your command: '{command}'\n\n"
+                "💡 To fix the authentication:\n"
+                "• Check your AWS credentials (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)\n"
+                "• Verify your AWS region is set correctly\n"
+                "• Ensure your IAM user has Bedrock permissions\n\n"
+                "I can still handle basic commands while you resolve this!"
+            )
+        else:
+            response["response"] = (
+                f"🤖 I'm operating in demo mode. I received your command: '{command}'\n\n"
+                "I can help you with basic information and service management!"
+            )
+
+        # Handle specific commands even in fallback mode
+        if "help" in command_lower or command_lower in ["h", "?"]:
+            response["response"] += (
+                "\n\n📋 Available Commands:\n"
+                "• 'services' - List available services\n"
+                "• 'status' - Show system status\n"
+                "• 'help' - Show this help message\n"
+                "• Payment commands: 'pay $10 to user@example.com'\n"
+                "• Message commands: 'send message hello to user@example.com'"
+            )
+            response["action"] = "help"
+
+        elif "services" in command_lower:
+            try:
+                services = await self.get_available_services()
+                service_list = "\n".join([f"• {s.get('name', 'Unknown')} ({s.get('type', 'generic')})" for s in services])
+                response["response"] = f"📋 Available Services:\n{service_list}"
+                response["action"] = "services_list"
+                response["services"] = services
+            except Exception as e:
+                logger.warning(f"Failed to get services in fallback mode: {e}")
+                response["response"] = "📋 Available Services:\n• Payment Service\n• Communication Service\n• Email Service"
+                response["action"] = "services_list"
+
+        elif "status" in command_lower:
+            response["response"] = (
+                "📊 System Status:\n"
+                "• Mode: Demo/Fallback\n"
+                "• AI Service: Unavailable\n"
+                "• Services: Basic functionality available\n"
+                "• User ID: " + str(self.user_id or "Not set")
+            )
+            response["action"] = "status"
+
+        elif "pay" in command_lower and ("to" in command_lower or "@" in command):
+            # Extract payment amount and recipient
+            response["response"] = (
+                f"💰 Payment Command Detected: '{command}'\n\n"
+                "In demo mode, I can simulate payment processing but cannot execute real transactions.\n"
+                "This would normally:\n"
+                "• Validate payment amount and recipient\n"
+                "• Process payment through your configured payment service\n"
+                "• Send confirmation to both parties"
+            )
+            response["action"] = "payment_simulated"
+
+        elif ("send" in command_lower or "message" in command_lower) and ("to" in command_lower or "@" in command):
+            response["response"] = (
+                f"📤 Message Command Detected: '{command}'\n\n"
+                "In demo mode, I can simulate message sending but cannot send real messages.\n"
+                "This would normally:\n"
+                "• Validate recipient and message content\n"
+                "• Send through your configured communication service\n"
+                "• Confirm delivery status"
+            )
+            response["action"] = "message_simulated"
+
+        # Add to conversation history
+        self._add_to_history(command, response)
+
+        return response
+
+    def _add_to_history(self, command: str, response: Dict[str, Any]):
+        """Add interaction to conversation history."""
+        self.conversation_history.append({
+            "timestamp": datetime.now().isoformat(),
+            "command": command,
+            "response": response
+        })
+
+        # Keep only last 50 interactions
+        if len(self.conversation_history) > 50:
+            self.conversation_history = self.conversation_history[-50:]
+
+    async def get_available_services(self) -> List[Dict[str, Any]]:
+        """Get available services for this user."""
+        try:
+            # Try to get from server first
+            services = await api_client.get_user_agent_services()
+            return services
+        except Exception as e:
+            logger.warning(f"Failed to get services from server: {e}")
+            # Return mock services
+            return [
+                {"id": 1, "name": "Mock Payment Service", "type": "payment"},
+                {"id": 2, "name": "Mock Communication Service", "type": "communication"}
+            ]
+
+    async def send_chat_message(self, receiver_username: str, content: str) -> Dict[str, Any]:
+        """Send a chat message through the agent."""
+        try:
+            result = await api_client.send_message(receiver_username, content)
+
+            if result.get("status") == "success":
+                return {
+                    "action": "message_sent",
+                    "receiver_username": receiver_username,
+                    "content": content,
+                    "status": "success"
+                }
+            else:
+                return {
+                    "action": "message_failed",
+                    "receiver_username": receiver_username,
+                    "error": "Failed to send message"
+                }
+        except Exception as e:
+            logger.error(f"Chat send error: {e}")
+            return {"action": "message_failed", "error": str(e)}
+
+    def add_chat_listener(self, listener: callable):
+        """Add a listener for incoming chat messages (placeholder)."""
+        # This would be implemented for real-time chat integration
+        pass
+
+
 class AgentCore:
     """Core agent logic for command processing and service management."""
 
     def __init__(self):
-        self.connectors: List[ServiceConnector] = []
-        self.user_services: List[Dict[str, Any]] = []
+        # Use the new EchoMCPAgent as the core
+        self.sdk_agent = EchoMCPAgent()
         self.is_initialized = False
         self.conversation_history: List[Dict[str, Any]] = []
-        self.ai_enabled = bool(settings.openai_api_key)
-        self.websocket_connection = None
         self.chat_listeners: List[callable] = []
 
-        # Initialize OpenAI client if API key is available
-        if self.ai_enabled:
-            try:
-                self.openai_client = openai.OpenAI(api_key=settings.openai_api_key)
-                logger.info("AI reasoning capabilities enabled")
-            except Exception as e:
-                logger.warning(f"Failed to initialize OpenAI client: {e}")
-                self.ai_enabled = False
+        # Legacy attributes for backward compatibility
+        self.connectors: List[ServiceConnector] = []
+        self.user_services: List[Dict[str, Any]] = []
+        self.ai_enabled = bool(settings.openai_api_key)
+        self.websocket_connection = None
 
     async def initialize(self):
-        """Initialize the agent by loading user services."""
+        """Initialize the agent."""
+        await self.sdk_agent.initialize()
+        self.is_initialized = True
+        logger.info("AgentCore initialized with OpenAI Agents SDK")
+
+        # Load user services for backward compatibility
         try:
-            logger.info("Initializing agent...")
+            services = await api_client.get_user_agent_services()
+            self.user_services = services
+        except Exception as api_error:
+            logger.warning(f"Failed to load services from server: {api_error}")
+            self.user_services = [
+                {"id": 1, "name": "Mock Payment Service", "type": "payment"},
+                {"id": 2, "name": "Mock Communication Service", "type": "communication"}
+            ]
 
-            # Try to load user services from server
-            try:
-                services = await api_client.get_user_agent_services()
-                self.user_services = services
-                logger.info(f"Loaded {len(services)} user services from server")
-            except Exception as api_error:
-                logger.warning(f"Failed to load services from server: {api_error}")
-                logger.info("Continuing with mock services for testing...")
-                # Use mock services for testing when API is not available
-                self.user_services = [
-                    {"id": 1, "name": "Mock Payment Service", "type": "payment"},
-                    {"id": 2, "name": "Mock Communication Service", "type": "communication"}
-                ]
-
-            # Initialize connectors for each service
-            self._initialize_connectors()
-
-            self.is_initialized = True
-            logger.info(f"Agent initialized with {len(self.connectors)} service connectors")
-
-        except Exception as e:
-            logger.error(f"Failed to initialize agent: {e}")
-            # Initialize with empty connectors if everything fails
-            self.connectors = []
-            self.is_initialized = True
-            raise
-
-        except Exception as e:
-            logger.error(f"Failed to initialize agent: {e}")
-            raise
+        # Initialize connectors
+        self._initialize_connectors()
 
     def _initialize_connectors(self):
-        """Initialize service connectors based on user services."""
+        """Initialize service connectors based on user services using dynamic registry."""
         self.connectors = []
 
         for service in self.user_services:
             service_type = service.get("type", "").lower()
 
+            # Use dynamic service registry to create appropriate connectors
             if service_type == "payment":
                 connector = PaymentConnector(service)
             elif service_type == "communication":
@@ -215,55 +939,19 @@ class AgentCore:
 
             self.connectors.append(connector)
 
-        logger.info(f"Initialized {len(self.connectors)} service connectors")
+        logger.info(f"Initialized {len(self.connectors)} service connectors from {len(self.user_services)} user services")
+
+    async def process_command(self, command: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Process command using the OpenAI Agents SDK."""
+        return await self.sdk_agent.process_command(command, context)
 
     async def process_command_with_ai(self, command: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Process command with AI reasoning for better understanding."""
-        if not self.ai_enabled:
-            return await self.process_command(command, context)
-
-        try:
-            # Use AI to understand and enhance the command
-            ai_analysis = await self._analyze_command_with_ai(command, context)
-
-            # Extract enhanced parameters
-            parameters = self._extract_parameters_enhanced(command, ai_analysis)
-
-            # Find best connector with AI help
-            connector = await self._find_connector_with_ai(command, ai_analysis)
-
-            if not connector:
-                return {
-                    "response": "I'm sorry, I don't have a service that can handle that request.",
-                    "action": "no_service_found",
-                    "available_services": [c.name for c in self.connectors]
-                }
-
-            # Execute with enhanced parameters
-            result = await connector.execute(command, parameters)
-
-            # Generate AI-enhanced response
-            response = await self._generate_response_with_ai(result, connector, ai_analysis)
-
-            # Store in conversation history
-            self._add_to_history(command, response, result)
-
-            return {
-                "response": response,
-                "action": result.get("action", "command_executed"),
-                "service": connector.name,
-                "ai_enhanced": True,
-                "result": result
-            }
-
-        except Exception as e:
-            logger.error(f"AI processing error: {e}")
-            # Fallback to regular processing
-            return await self.process_command(command, context)
+        """Process command with AI reasoning (same as process_command in new implementation)."""
+        return await self.process_command(command, context)
 
     async def _analyze_command_with_ai(self, command: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Use AI to analyze and understand the command intent."""
-        if not self.ai_enabled:
+        if not self.ai_enabled or not self.llm:
             return {}
 
         try:
@@ -282,20 +970,15 @@ Return JSON format."""
             if context:
                 user_prompt += f"\nContext: {json.dumps(context)}"
 
-            response = await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: self.openai_client.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    max_tokens=200,
-                    temperature=0.3
-                )
-            )
+            # Use LangChain for analysis
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_prompt)
+            ]
 
-            analysis_text = response.choices[0].message.content.strip()
+            result = await self.llm.ainvoke(messages)
+            analysis_text = result.content.strip()
+
             return json.loads(analysis_text) if analysis_text.startswith('{') else {}
 
         except Exception as e:
@@ -316,7 +999,7 @@ Return JSON format."""
 
     async def _generate_response_with_ai(self, result: Dict[str, Any], connector: ServiceConnector, ai_analysis: Dict[str, Any]) -> str:
         """Generate AI-enhanced response."""
-        if not self.ai_enabled:
+        if not self.ai_enabled or not self.llm:
             return self._generate_response(result, connector)
 
         try:
@@ -328,20 +1011,14 @@ Action: {result.get('action', 'unknown')}
 Result: {json.dumps(result)}
 Analysis: {json.dumps(ai_analysis)}"""
 
-            response = await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: self.openai_client.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    max_tokens=100,
-                    temperature=0.7
-                )
-            )
+            # Use LangChain for response generation
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_prompt)
+            ]
 
-            return response.choices[0].message.content.strip()
+            response_result = await self.llm.ainvoke(messages)
+            return response_result.content.strip()
 
         except Exception as e:
             logger.warning(f"AI response generation failed: {e}")
@@ -382,10 +1059,10 @@ Analysis: {json.dumps(ai_analysis)}"""
         """Add a listener for incoming chat messages."""
         self.chat_listeners.append(listener)
 
-    async def send_chat_message(self, receiver_id: int, content: str) -> Dict[str, Any]:
+    async def send_chat_message(self, receiver_username: str, content: str) -> Dict[str, Any]:
         """Send a chat message through the agent."""
         try:
-            result = await api_client.send_message(receiver_id, content)
+            result = await api_client.send_message(receiver_username, content)
 
             if result.get("status") == "success":
                 # Notify listeners
@@ -393,7 +1070,7 @@ Analysis: {json.dumps(ai_analysis)}"""
                     try:
                         await listener({
                             "type": "message_sent",
-                            "receiver_id": receiver_id,
+                            "receiver_username": receiver_username,
                             "content": content,
                             "result": result
                         })
@@ -402,7 +1079,7 @@ Analysis: {json.dumps(ai_analysis)}"""
 
                 return {
                     "action": "message_sent",
-                    "receiver_id": receiver_id,
+                    "receiver_username": receiver_username,
                     "content": content,
                     "status": "success"
                 }
@@ -561,38 +1238,36 @@ class UserAgent:
     def __init__(self, user_id: int, user_data: Dict[str, Any]):
         self.user_id = user_id
         self.user_data = user_data
+        
+        # Use the new EchoMCPAgent as the core
+        self.sdk_agent = EchoMCPAgent(user_id=user_id, user_data=user_data)
+        
+        # Legacy attributes for backward compatibility
         self.connectors: List[ServiceConnector] = []
         self.user_services: List[Dict[str, Any]] = []
         self.conversation_history: List[Dict[str, Any]] = []
         self.chat_listeners: List[callable] = []
         self.is_initialized = False
 
-        # AI capabilities (shared across users for now)
+        # AI capabilities
         self.ai_enabled = bool(settings.openai_api_key)
-        if self.ai_enabled:
-            try:
-                self.openai_client = openai.OpenAI(api_key=settings.openai_api_key)
-            except Exception as e:
-                logger.warning(f"Failed to initialize OpenAI client: {e}")
-                self.ai_enabled = False
 
     async def initialize(self):
         """Initialize user-specific agent."""
-        try:
-            logger.info(f"Initializing agent for user {self.user_id}")
+        await self.sdk_agent.initialize()
+        self.is_initialized = True
+        logger.info(f"UserAgent {self.user_id} initialized with OpenAI Agents SDK")
 
-            # Load user-specific services
-            try:
-                services = await api_client.get_user_agent_services()
-                self.user_services = services
-                logger.info(f"Loaded {len(services)} services for user {self.user_id}")
-            except Exception as api_error:
-                logger.warning(f"Failed to load services for user {self.user_id}: {api_error}")
-                # Use mock services
-                self.user_services = [
-                    {"id": 1, "name": "Mock Payment Service", "type": "payment"},
-                    {"id": 2, "name": "Mock Communication Service", "type": "communication"}
-                ]
+        # Load user services for backward compatibility
+        try:
+            services = await api_client.get_user_agent_services()
+            self.user_services = services
+        except Exception as api_error:
+            logger.warning(f"Failed to load services for user {self.user_id}: {api_error}")
+            self.user_services = [
+                {"id": 1, "name": "Mock Payment Service", "type": "payment"},
+                {"id": 2, "name": "Mock Communication Service", "type": "communication"}
+            ]
 
             # Initialize connectors for this user
             self._initialize_connectors()
@@ -605,66 +1280,28 @@ class UserAgent:
             raise
 
     def _initialize_connectors(self):
-        """Initialize service connectors for this user."""
+        """Initialize service connectors for this user using dynamic registry."""
         self.connectors = []
 
         for service in self.user_services:
             service_type = service.get("type", "").lower()
 
+            # Use dynamic service registry to create appropriate connectors
             if service_type == "payment":
                 connector = PaymentConnector(service)
             elif service_type == "communication":
                 connector = CommunicationConnector(service)
             else:
+                # Generic connector for unknown service types
                 connector = ServiceConnector(service)
 
             self.connectors.append(connector)
 
+        logger.info(f"UserAgent {self.user_id} initialized with {len(self.connectors)} connectors from {len(self.user_services)} services")
+
     async def process_command(self, command: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Process command for this specific user."""
-        if not self.is_initialized:
-            await self.initialize()
-
-        try:
-            logger.info(f"User {self.user_id} processing command: {command}")
-
-            # Find appropriate connector
-            connector = self._find_connector(command)
-
-            if not connector:
-                return {
-                    "response": "I'm sorry, I don't have a service that can handle that request.",
-                    "action": "no_service_found",
-                    "available_services": [c.name for c in self.connectors]
-                }
-
-            # Extract parameters
-            parameters = self._extract_parameters(command, context or {})
-
-            # Execute command
-            result = await connector.execute(command, parameters)
-
-            # Generate response
-            response = self._generate_response(result, connector)
-
-            # Add to user-specific history
-            self._add_to_history(command, response, result)
-
-            return {
-                "response": response,
-                "action": result.get("action", "command_executed"),
-                "service": connector.name,
-                "user_id": self.user_id,
-                "result": result
-            }
-
-        except Exception as e:
-            logger.error(f"Error processing command for user {self.user_id}: {e}")
-            return {
-                "response": "I encountered an error while processing your request. Please try again.",
-                "error": str(e),
-                "action": "error"
-            }
+        """Process command for this specific user using OpenAI Agents SDK."""
+        return await self.sdk_agent.process_command(command, context)
 
     def _find_connector(self, command: str) -> Optional[ServiceConnector]:
         """Find appropriate connector for command."""
@@ -695,19 +1332,62 @@ class UserAgent:
         if len(self.conversation_history) > 50:
             self.conversation_history = self.conversation_history[-50:]
 
-    async def send_chat_message(self, receiver_id: int, content: str) -> Dict[str, Any]:
+    async def send_chat_message(self, receiver_username: str, content: str) -> Dict[str, Any]:
         """Send chat message as this user."""
         try:
-            result = await api_client.send_message(receiver_id, content)
+            result = await api_client.send_message(receiver_username, content)
             return {
                 "action": "message_sent",
-                "receiver_id": receiver_id,
+                "receiver_username": receiver_username,
                 "content": content,
                 "status": "success" if result.get("status") == "success" else "failed"
             }
         except Exception as e:
             logger.error(f"Chat send error for user {self.user_id}: {e}")
             return {"action": "message_failed", "error": str(e)}
+
+    async def get_available_services(self) -> List[Dict[str, Any]]:
+        """Get list of available services for this user."""
+        try:
+            # Try to get services from the SDK agent first
+            if hasattr(self.sdk_agent, 'user_services') and self.sdk_agent.user_services:
+                services = self.sdk_agent.user_services
+            else:
+                # Fallback to API call
+                services = await api_client.get_user_agent_services()
+
+            # Format services for response
+            formatted_services = []
+            for service in services:
+                formatted_services.append({
+                    "id": service.get("id"),
+                    "name": service.get("name", "Unknown Service"),
+                    "type": service.get("type", "generic"),
+                    "description": f"{service.get('type', 'generic').title()} service: {service.get('name', 'Unknown')}",
+                    "status": "available"
+                })
+
+            return formatted_services
+
+        except Exception as e:
+            logger.warning(f"Failed to get services for user {self.user_id}: {e}")
+            # Return mock services as fallback
+            return [
+                {
+                    "id": 1,
+                    "name": "Mock Payment Service",
+                    "type": "payment",
+                    "description": "Payment service for transactions",
+                    "status": "available"
+                },
+                {
+                    "id": 2,
+                    "name": "Mock Communication Service",
+                    "type": "communication",
+                    "description": "Communication service for messaging",
+                    "status": "available"
+                }
+            ]
 
 
 class AgentManager:

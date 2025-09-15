@@ -116,14 +116,14 @@ class ServerAPIClient:
         return []
 
     # Chat endpoints
-    async def send_message(self, receiver_id: int, content: str) -> Dict[str, Any]:
+    async def send_message(self, receiver_username: str, content: str) -> Dict[str, Any]:
         """Send a chat message."""
-        data = {"receiver_id": receiver_id, "content": content}
+        data = {"receiver_username": receiver_username, "content": content}
         return await self._make_request("POST", "/chat/send", data)
 
-    async def get_chat_history(self, other_user_id: int) -> List[Dict[str, Any]]:
+    async def get_chat_history(self, other_username: str) -> List[Dict[str, Any]]:
         """Get chat history with another user."""
-        response = await self._make_request("GET", f"/chat/history/{other_user_id}")
+        response = await self._make_request("GET", f"/chat/history/{other_username}")
         if response.get("status") == "success":
             return response["data"]
         return []
